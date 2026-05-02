@@ -5,6 +5,8 @@
 #ifndef EEGCLI_SHIM_H
 #define EEGCLI_SHIM_H
 
+#import <Foundation/Foundation.h>
+
 #import "NTTypes.h"
 #import "NTSensor.h"
 #import "NTScanner.h"
