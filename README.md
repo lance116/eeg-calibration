@@ -29,11 +29,26 @@ Approve it. If you missed it: System Settings → Privacy & Security → Bluetoo
 ./build/eegcli scan                         # discover headbands (5 s)
 ./build/eegcli resist                       # live electrode contact check
 ./build/eegcli stream --seconds 30 --out data/session.csv
+./build/eegcli stream --label happy --seconds 180 --out data/happy_1.csv
 ./build/eegcli calibrate --out data/baseline.csv
 ```
 
 All subcommands accept `--serial <SerialNumber>` to target a specific device
 when more than one is in range; otherwise the first found wins.
+
+## Emotion classifier
+
+`analyze/` is a small Python toolkit that trains a logistic-regression
+classifier on labeled BrainBit recordings (bandpower + asymmetry + Hjorth
+mobility features per 4-second epoch). See **PROTOCOL.md** for the recording
+script and realistic accuracy targets for 4-channel hardware.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r analyze/requirements.txt
+python -m analyze.train data/happy_*.csv data/calm_*.csv data/sad_*.csv
+python -m analyze.predict data/some_test.csv
+```
 
 ## Layout
 
@@ -46,6 +61,8 @@ Sources/
   main.swift          # subcommand dispatch
   Device.swift        # scan + connect helper
   Scan.swift / Resistance.swift / Stream.swift / Calibrate.swift
+analyze/              # Python emotion-classifier toolkit
+PROTOCOL.md           # recording protocol for the classifier
 vendor/               # populated by setup.sh (gitignored)
 data/                 # CSV recordings (gitignored)
 ```

@@ -34,6 +34,7 @@ func runStream(args: [String]) -> Int32 {
     var seconds: TimeInterval = 30.0
     var outPath: String? = nil
     var serial: String? = nil
+    var label: String? = nil
     var quiet = false
     var i = 0
     while i < args.count {
@@ -47,9 +48,12 @@ func runStream(args: [String]) -> Int32 {
         case "--serial":
             guard i + 1 < args.count else { return usageStream() }
             serial = args[i + 1]; i += 2
+        case "--label":
+            guard i + 1 < args.count else { return usageStream() }
+            label = args[i + 1]; i += 2
         case "--quiet": quiet = true; i += 1
         case "-h", "--help":
-            print("usage: eegcli stream [--seconds N] [--out PATH] [--serial SN] [--quiet]")
+            print("usage: eegcli stream [--seconds N] [--out PATH] [--label NAME] [--serial SN] [--quiet]")
             return 0
         default:
             FileHandle.standardError.write(Data("unknown arg: \(args[i])\n".utf8))
@@ -71,8 +75,10 @@ func runStream(args: [String]) -> Int32 {
 
     var csv: CSVWriter? = nil
     if let p = outPath {
+        var header = ["t_host", "pack_num", "marker", "O1_uV", "O2_uV", "T3_uV", "T4_uV"]
+        if label != nil { header.insert("label", at: 1) }
         do {
-            csv = try CSVWriter(path: p, header: ["t_host", "pack_num", "marker", "O1_uV", "O2_uV", "T3_uV", "T4_uV"])
+            csv = try CSVWriter(path: p, header: header)
         } catch {
             FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
             return 1
@@ -80,14 +86,15 @@ func runStream(args: [String]) -> Int32 {
     }
 
     let counter = AtomicInt()
+    let labelField = label.map { "," + $0 } ?? ""
 
     bb.setSignalDataCallback { (samples: [NTBrainBitSignalData]) in
         let now = Date().timeIntervalSince1970
         var batch = ""
-        batch.reserveCapacity(samples.count * 64)
+        batch.reserveCapacity(samples.count * 72)
         for s in samples {
-            batch.append(String(format: "%.6f,%u,%u,%.3f,%.3f,%.3f,%.3f\n",
-                                now, s.packNum, s.marker,
+            batch.append(String(format: "%.6f%@,%u,%u,%.3f,%.3f,%.3f,%.3f\n",
+                                now, labelField as NSString, s.packNum, s.marker,
                                 s.o1.doubleValue * 1e6,
                                 s.o2.doubleValue * 1e6,
                                 s.t3.doubleValue * 1e6,
@@ -133,7 +140,7 @@ func runStream(args: [String]) -> Int32 {
 }
 
 private func usageStream() -> Int32 {
-    FileHandle.standardError.write(Data("usage: eegcli stream [--seconds N] [--out PATH] [--serial SN] [--quiet]\n".utf8))
+    FileHandle.standardError.write(Data("usage: eegcli stream [--seconds N] [--out PATH] [--label NAME] [--serial SN] [--quiet]\n".utf8))
     return 2
 }
 
