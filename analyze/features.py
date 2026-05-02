@@ -30,6 +30,7 @@ BANDS = {
 }
 EPOCH_SEC = 4.0
 EPOCH_STRIDE_SEC = 2.0
+ARTIFACT_PEAK_TO_PEAK_UV = 200.0
 
 
 @dataclass
@@ -120,8 +121,14 @@ def epoch(signal: np.ndarray) -> np.ndarray:
     return np.stack([signal[s:s + n] for s in starts], axis=0)
 
 
+def _is_clean(epoch_data: np.ndarray, threshold_uv: float) -> bool:
+    p2p = epoch_data.max(axis=0) - epoch_data.min(axis=0)
+    return bool(p2p.max() < threshold_uv)
+
+
 def build_features(csv_paths: list[Path], line_hz: float = 60.0,
-                   label_override: str | None = None) -> FeatureSet:
+                   label_override: str | None = None,
+                   reject_threshold_uv: float = ARTIFACT_PEAK_TO_PEAK_UV) -> FeatureSet:
     all_X, all_y, all_src = [], [], []
     for p in csv_paths:
         sig, file_label = load_csv(p, line_hz=line_hz)
@@ -132,9 +139,14 @@ def build_features(csv_paths: list[Path], line_hz: float = 60.0,
         if epochs.shape[0] == 0:
             print(f"  {p.name}: too short, skipping")
             continue
-        feats = np.stack([_features_for_epoch(e) for e in epochs], axis=0)
+        kept = [e for e in epochs if _is_clean(e, reject_threshold_uv)]
+        rejected = epochs.shape[0] - len(kept)
+        if not kept:
+            print(f"  {p.name}: all {epochs.shape[0]} epochs rejected as artifacts; skipping")
+            continue
+        feats = np.stack([_features_for_epoch(e) for e in kept], axis=0)
         all_X.append(feats); all_y.extend([label] * feats.shape[0]); all_src.extend([p.name] * feats.shape[0])
-        print(f"  {p.name}: {feats.shape[0]} epochs, label={label}")
+        print(f"  {p.name}: {len(kept)}/{epochs.shape[0]} epochs kept ({rejected} rejected), label={label}")
     if not all_X:
         raise ValueError("no usable epochs in input files")
     return FeatureSet(

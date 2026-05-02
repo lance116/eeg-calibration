@@ -1,10 +1,10 @@
-"""Train a logistic-regression emotion classifier on labeled BrainBit recordings.
+"""Train + evaluate emotion classifiers on labeled BrainBit recordings.
 
-  python -m analyze.train data/happy_*.csv data/calm_*.csv data/sad_*.csv \\
-    --out analyze/model.joblib
+Runs three reports per dataset: full multi-class, calm-vs-music (arousal
+proxy), and happy-vs-sad (valence). Uses LeaveOneGroupOut so accuracy
+reflects new-recording generalization.
 
-Splits epochs by source file to avoid leakage (epochs from the same recording
-are highly correlated, so randomly splitting epochs over-reports accuracy).
+  python -m analyze.train data/happy_*.csv data/calm_*.csv data/sad_*.csv
 """
 from __future__ import annotations
 
@@ -16,67 +16,89 @@ import joblib
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from .features import build_features
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("csvs", nargs="+", type=Path, help="labeled CSVs from `eegcli stream --label X`")
-    ap.add_argument("--out", type=Path, default=Path("analyze/model.joblib"))
-    ap.add_argument("--line-hz", type=float, default=60.0, help="line-noise notch (60 US, 50 EU)")
-    ap.add_argument("--folds", type=int, default=5)
-    args = ap.parse_args()
-
-    print(f"Loading {len(args.csvs)} files...")
-    fs = build_features(args.csvs, line_hz=args.line_hz)
-    print(f"\nTotal: {fs.X.shape[0]} epochs across {len(set(fs.source))} files, "
-          f"{fs.X.shape[1]} features, classes={sorted(set(fs.y))}")
-
-    groups = np.array(fs.source)
-    n_groups = len(set(groups))
-    n_folds = min(args.folds, n_groups)
-    if n_folds < 2:
-        print("Need recordings from at least 2 different files per class; aborting CV.")
-        return 1
-
-    pipe = Pipeline([
+def _make_pipe() -> Pipeline:
+    return Pipeline([
         ("scale", StandardScaler()),
-        ("clf",   LogisticRegression(max_iter=2000, C=1.0, multi_class="auto")),
+        ("clf",   LogisticRegression(max_iter=5000, C=1.0, solver="lbfgs")),
     ])
 
-    print(f"\nGroupKFold cross-validation ({n_folds} folds, grouped by source file):")
-    cv = GroupKFold(n_splits=n_folds)
+
+def _evaluate(X: np.ndarray, y: np.ndarray, groups: np.ndarray, label: str) -> dict:
+    classes = sorted(set(y))
+    if len(classes) < 2:
+        print(f"\n=== {label} ===  only one class, skipping")
+        return {}
+
+    print(f"\n=== {label} ===")
+    print(f"  classes: {classes}  chance: {1/len(classes):.3f}")
+    cv = LeaveOneGroupOut()
     accs, all_true, all_pred = [], [], []
-    for k, (tr, te) in enumerate(cv.split(fs.X, fs.y, groups)):
-        pipe.fit(fs.X[tr], fs.y[tr])
-        pred = pipe.predict(fs.X[te])
-        acc = (pred == fs.y[te]).mean()
-        held_out = sorted(set(groups[te]))
-        print(f"  fold {k+1}: acc={acc:.3f}  held_out={held_out}")
-        accs.append(acc); all_true.extend(fs.y[te]); all_pred.extend(pred)
+    for tr, te in cv.split(X, y, groups):
+        held = sorted(set(groups[te]))
+        if len(set(y[tr])) < 2:
+            print(f"  fold held_out={held}: training set has <2 classes, skipping")
+            continue
+        pipe = _make_pipe()
+        pipe.fit(X[tr], y[tr])
+        pred = pipe.predict(X[te])
+        acc = (pred == y[te]).mean()
+        print(f"  held_out={held}: acc={acc:.3f}  ({(pred == y[te]).sum()}/{len(pred)})")
+        accs.append(acc); all_true.extend(y[te]); all_pred.extend(pred)
 
-    print(f"\nMean CV accuracy: {np.mean(accs):.3f} ± {np.std(accs):.3f}  (chance={1/len(set(fs.y)):.3f})")
-    print("\nConfusion matrix (rows=true, cols=pred):")
-    classes = sorted(set(fs.y))
+    if not accs:
+        return {}
+    print(f"  mean: {np.mean(accs):.3f} ± {np.std(accs):.3f}")
     cm = confusion_matrix(all_true, all_pred, labels=classes)
-    print("       " + "  ".join(f"{c:>8}" for c in classes))
+    print("  confusion (rows=true, cols=pred):")
+    print("    " + " ".join(f"{c:>8}" for c in classes))
     for i, c in enumerate(classes):
-        print(f"  {c:>5}  " + "  ".join(f"{v:>8}" for v in cm[i]))
-    print()
-    print(classification_report(all_true, all_pred, digits=3))
+        print(f"    {c:>5} " + " ".join(f"{v:>8}" for v in cm[i]))
+    return {"mean_acc": float(np.mean(accs)), "std_acc": float(np.std(accs)),
+            "classes": classes, "confusion": cm.tolist()}
 
-    pipe.fit(fs.X, fs.y)
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("csvs", nargs="+", type=Path)
+    ap.add_argument("--out", type=Path, default=Path("analyze/model.joblib"))
+    ap.add_argument("--line-hz", type=float, default=60.0)
+    ap.add_argument("--reject-uv", type=float, default=200.0,
+                    help="drop epochs with peak-to-peak above this on any channel")
+    args = ap.parse_args()
+
+    print(f"Loading {len(args.csvs)} files (artifact threshold {args.reject_uv} µV p2p)...")
+    fs = build_features(args.csvs, line_hz=args.line_hz, reject_threshold_uv=args.reject_uv)
+    print(f"\nTotal: {fs.X.shape[0]} clean epochs across {len(set(fs.source))} files, "
+          f"{fs.X.shape[1]} features")
+
+    groups = np.array(fs.source)
+    y = fs.y
+    X = fs.X
+
+    results = {}
+    results["multiclass"] = _evaluate(X, y, groups, f"{len(set(y))}-class: " + " vs ".join(sorted(set(y))))
+
+    if {"calm", "happy", "sad"}.issubset(set(y)):
+        y_arousal = np.where(y == "calm", "calm", "music")
+        results["arousal"] = _evaluate(X, y_arousal, groups, "arousal: calm vs music")
+
+        m = (y == "happy") | (y == "sad")
+        results["valence"] = _evaluate(X[m], y[m], groups[m], "valence: happy vs sad")
+
+    pipe = _make_pipe()
+    pipe.fit(X, y)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"pipeline": pipe, "feature_names": fs.feature_names,
-                 "classes": classes, "line_hz": args.line_hz}, args.out)
-    meta = {"cv_mean_acc": float(np.mean(accs)), "cv_std_acc": float(np.std(accs)),
-            "classes": classes, "n_epochs": int(fs.X.shape[0])}
-    args.out.with_suffix(".json").write_text(json.dumps(meta, indent=2))
-    print(f"Saved model to {args.out}")
+                 "classes": sorted(set(y)), "line_hz": args.line_hz}, args.out)
+    args.out.with_suffix(".json").write_text(json.dumps(results, indent=2))
+    print(f"\nSaved model to {args.out}")
     return 0
 
 
