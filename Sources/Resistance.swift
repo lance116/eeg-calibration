@@ -6,10 +6,13 @@ private func formatOhms(_ ohms: Double?) -> String {
     return String(format: "%5.0f kΩ", v / 1e3)
 }
 
+// Thresholds from BrainBit's own device-recommendation doc: 1 MΩ is the
+// reseat line, < 100 kΩ is the de-facto bare-skin "excellent" benchmark for
+// dry electrodes, < 300 kΩ is "good through hair".
 private func quality(_ ohms: Double?) -> String {
     guard let v = ohms else { return "?  " }
-    if v < 750e3 { return "OK " }
-    if v < 2e6   { return "ok " }
+    if v < 100e3 { return "OK " }
+    if v < 1e6   { return "ok " }
     return "BAD"
 }
 

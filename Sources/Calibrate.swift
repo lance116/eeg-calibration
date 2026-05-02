@@ -1,6 +1,7 @@
 import Foundation
 
-private let kResistBadThresholdOhms: Double = 2e6
+// BrainBit's docs say resistance > 1 MΩ means reseat the headband.
+private let kResistBadThresholdOhms: Double = 1e6
 
 func runCalibrate(args: [String]) -> Int32 {
     var outPath: String = "data/baseline.csv"
@@ -59,7 +60,7 @@ func runCalibrate(args: [String]) -> Int32 {
         print("    \(c): \(str)  \(isBad ? "BAD" : "ok ")")
     }
     if !bad.isEmpty {
-        print("  WARNING: \(bad.joined(separator: ",")) above 2 MΩ. Reseat / dampen those electrodes; recording anyway.")
+        print("  WARNING: \(bad.joined(separator: ",")) above 1 MΩ. Reseat / dampen those electrodes; recording anyway.")
     }
 
     // 2/3. Open + closed phases into a single CSV.
