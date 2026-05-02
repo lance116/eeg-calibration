@@ -12,3 +12,15 @@ build/
 data/*.csv
 data/*.parquet
 !data/.gitkeep
+
+# SDK runtime logs
+logs/
+
+# Trained models
+analyze/*.joblib
+analyze/*.json
+
+# Python venv
+.venv/
+__pycache__/
+*.pyc
