@@ -1,12 +1,14 @@
-__pycache__/
-*.pyc
-.venv/
-venv/
-.env
 .DS_Store
 .idea/
 .vscode/
 
+# Vendored BrainBit SDK — fetched by setup.sh
+vendor/
+
+# Build artifacts
+build/
+
+# Captured signal data
 data/*.csv
 data/*.parquet
 !data/.gitkeep
